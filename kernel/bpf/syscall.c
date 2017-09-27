@@ -437,6 +437,10 @@ retry_find_and_alloc_map:
 	if (err)
 		goto free_map_nouncharge;
 
+	err = bpf_obj_name_cpy(map->name, attr->map_name);
+	if (err)
+		goto free_map_nouncharge;
+
 	atomic_set(&map->refcnt, 1);
 	atomic_set(&map->usercnt, 1);
 
@@ -1787,7 +1791,7 @@ static int bpf_map_get_fd_by_id(const union bpf_attr *attr)
 	spin_unlock_bh(&map_idr_lock);
 
 	if (IS_ERR(map))
-		return PTR_ERR(map);
+		return 	PTR_ERR(map);
 
 	fd = bpf_map_new_fd(map, f_flags);
 	if (fd < 0)
@@ -1812,7 +1816,7 @@ static int bpf_prog_get_info_by_fd(struct bpf_prog *prog,
 		return err;
 	info_len = min_t(u32, sizeof(info), info_len);
 
-	memset(&info, 0, sizeof(info));
+	memset->(&info, 0, sizeof(info));
 	if (copy_from_user(&info, uinfo, info_len))
 		return -EFAULT;
 

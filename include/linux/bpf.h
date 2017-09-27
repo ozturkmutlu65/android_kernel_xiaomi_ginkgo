@@ -75,7 +75,7 @@ struct bpf_map {
 	atomic_t refcnt;
 	atomic_t usercnt;
 	struct work_struct work;
-	char name[BPF_OBJ_NAME_LEN];
+	u8 name[BPF_OBJ_NAME_LEN];
 };
 
 /* function argument constraints */
@@ -423,7 +423,7 @@ void __dev_map_flush(struct bpf_map *map);
 /* Return map's numa specified by userspace */
 static inline int bpf_map_attr_numa_node(const union bpf_attr *attr)
 {
-	return (attr->map_flags & BPF_F_NUMA_NODE) ?
+	return (attr->map_flags & BPF_F_NUMA_NODE) 
 		attr->numa_node : NUMA_NO_NODE;
 }
 

@@ -1,112 +1,252 @@
-#!/usr/bin/env bash
+#! /bin/bash
+
 #
-# Copyright (C) 2023 Edwiin Kusuma Jaya (ryuzenn)
+# Script for building Android arm64 Kernel
 #
-# Simple Local Kernel Build Script
+# Copyright (c) 2024 Edwiin Kusuma Jaya <kutemeikito0905@gmail.com>
+# Based on Panchajanya1999 & Fiqri19102002 script.
 #
-# Configured for Redmi Note 8 / ginkgo custom kernel source
+
+# Set environment for directory
+KERNEL_DIR=$PWD
+IMG_DIR="$KERNEL_DIR"/out/arch/arm64/boot
+
+# Get defconfig file
+DEFCONFIG=vendor/ginkgo-perf_defconfig
+
+# Set common environment
+export KBUILD_BUILD_USER="Ryuzenn"
+export KBUILD_BUILD_HOST="RastaMod69||CircleCI"
+
 #
-# Setup build env with akhilnarang/scripts repo
+# Set if do you use GCC or clang compiler
+# Default is clang compiler
 #
-# Use this script on root of kernel directory
+COMPILER=clang
 
-SECONDS=0 # builtin bash timer
-ZIPNAME="RyzenKernel-AOSP-Ginkgo-$(TZ=Asia/Jakarta date +"%Y%m%d-%H%M").zip"
-ZIPNAME_KSU="RyzenKernel-AOSP-Ginkgo-KSU-$(TZ=Asia/Jakarta date +"%Y%m%d-%H%M").zip"
-TC_DIR="/workspace/toolchain/linux-x86"
-CLANG_DIR="/workspace/toolchain/linux-x86/clang-r498229b"
-GCC_64_DIR="/workspace/toolchain/aarch64-linux-android-4.9"
-GCC_32_DIR="/workspace/toolchain/arm-linux-androideabi-4.9"
-AK3_DIR="/workspace/android/AnyKernel3"
-DEFCONFIG="vendor/ginkgo-perf_defconfig"
+# Get distro name
+DISTRO=$(source /etc/os-release && echo ${NAME})
 
-export PATH="$CLANG_DIR/bin:$PATH"
-export KBUILD_BUILD_USER="EdwiinKJ"
-export KBUILD_BUILD_HOST="RastaMod69"
-export KBUILD_BUILD_VERSION="1"
-export LOCALVERSION
+#Get all cores of CPU
+PROCS=$(nproc --all)
+export PROCS
 
-if ! [ -d "${CLANG_DIR}" ]; then
-echo "Clang not found! Cloning to ${TC_DIR}..."
-if ! git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 ${TC_DIR}; then
-echo "Cloning failed! Aborting..."
-exit 1
-fi
-fi
+# Get total RAM
+RAM_INFO=$(free -m)
+TOTAL_RAM=$(echo "$RAM_INFO" | awk '/^Mem:/{print $2}')
+TOTAL_RAM_GB=$(awk "BEGIN {printf \"%.0f\", $TOTAL_RAM/1024}")
+export TOTAL_RAM_GB
 
-if ! [ -d "${GCC_64_DIR}" ]; then
-echo "gcc not found! Cloning to ${GCC_64_DIR}..."
-if ! git clone --depth=1 -b lineage-19.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git ${GCC_64_DIR}; then
-echo "Cloning failed! Aborting..."
-exit 1
-fi
-fi
+# Set date and time
+DATE=$(TZ=Asia/Jakarta date)
 
-if ! [ -d "${GCC_32_DIR}" ]; then
-echo "gcc_32 not found! Cloning to ${GCC_32_DIR}..."
-if ! git clone --depth=1 -b lineage-19.1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git ${GCC_32_DIR}; then
-echo "Cloning failed! Aborting..."
-exit 1
-fi
-fi
+# Set date and time for zip name
+ZIP_DATE=$(TZ=Asia/Jakarta date +"%Y%m%d-%H%M")
 
-# Setup and apply patch KernelSU in root dir
-if ! [ -d "$KERNEL_DIR"/KernelSU ]; then
-	curl -LSs "https://raw.githubusercontent.com/kutemeikito/KernelSU/main/kernel/setup.sh" | bash -s main
-	git apply KernelSU-hook.patch
+# Get branch name
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+export BRANCH
+
+# Check kernel version
+KERVER=$(make kernelversion)
+
+# Get last commit
+COMMIT_HEAD=$(git log --oneline -1)
+
+# Check directory path
+if [ -d "/root/project" ]; then
+	echo -e "Detected Continuous Integration dir"
+	export LOCALBUILD=0
+	export KBUILD_BUILD_VERSION="1"
+	# Clone telegram script first
+	git clone --depth=1 https://github.com/fabianonline/telegram.sh.git telegram
+	# Set environment for telegram
+	export TELEGRAM_DIR="$KERNEL_DIR/telegram/telegram"
+	export TELEGRAM_CHAT="-1004223842746"
+	# Get CPU name
+	export CPU_NAME="$(lscpu | sed -nr '/Model name/ s/.*:\s*(.*) */\1/p')"
 else
-	echo -e "\nSet No KernelSU Install, just skip\n"
+	echo -e "Detected local dir"
+	export LOCALBUILD=1
 fi
 
-# Set function for override kernel name and variants
-curl -kLSs "https://raw.githubusercontent.com/kutemeikito/KernelSU/main/kernel/setup.sh" | bash -s main
-if [[ $1 = "-k" || $1 = "--ksu" ]]; then
-echo -e "\nKSU Support, let's Make it On\n"
-sed -i 's/CONFIG_KSU=y/CONFIG_LOCALVERSION="-RyzenKernel-KSU"/g' arch/arm64/configs/vendor/ginkgo-perf_defconfig
-else
-echo -e "\nKSU not Support, let's Make it off\n"
-sed -i 's/# CONFIG_KSU=is not set/CONFIG_LOCALVERSION="-RyzenKernel"/g' arch/arm64/configs/vendor/ginkgo-perf_defconfig
+# Cleanup KernelSU first on local build
+if [[ -d "$KERNEL_DIR"/KernelSU && $LOCALBUILD == "1" ]]; then
+	rm -rf KernelSU drivers/kernelsu
 fi
 
-if [[ $1 = "-c" || $1 = "--clean" ]]; then
-rm -rf out
-fi
+# Set function for telegram
+tg_post_msg() {
+	"${TELEGRAM_DIR}" -H -D \
+        "$(
+            for POST in "${@}"; do
+                echo "${POST}"
+            done
+        )"
+}
 
-mkdir -p out
-make O=out ARCH=arm64 $DEFCONFIG
+tg_post_build() {
+	"${TELEGRAM_DIR}" -H \
+        -f "$1" \
+        "$2"
+}
 
-echo -e "\nStarting compilation...\n"
-make -j$(nproc --all) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar AS=llvm-as NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=$GCC_64_DIR/bin/aarch64-linux-android- CROSS_COMPILE_ARM32=$GCC_32_DIR/bin/arm-linux-androideabi- CLANG_TRIPLE=aarch64-linux-gnu- Image.gz-dtb dtbo.img
+# Set function for setup KernelSU
+setup_ksu() {
+	curl -kLSs "https://raw.githubusercontent.com/kutemeikito/KernelSU/main/kernel/setup.sh" | bash -s main
+	if [ -d "$KERNEL_DIR"/KernelSU ]; then
+		git apply KernelSU-hook.patch
+	else
+		echo -e "Setup KernelSU failed, stopped build now..."
+		exit 1
+	fi
+}
 
-if [ -f "out/arch/arm64/boot/Image.gz-dtb" ] && [ -f "out/arch/arm64/boot/dtbo.img" ]; then
-echo -e "\nKernel compiled succesfully! Zipping up...\n"
-git restore arch/arm64/configs/vendor/ginkgo-perf_defconfig
-if [ -d "$AK3_DIR" ]; then
-cp -r $AK3_DIR AnyKernel3
-elif ! git clone -q https://github.com/kutemeikito/AnyKernel3; then
-echo -e "\nAnyKernel3 repo not found locally and cloning failed! Aborting..."
-exit 1
+# Set function for cloning repository
+clone() {
+	# Clone AnyKernel3
+	git clone --depth=1 https://github.com/kutemeikito/AnyKernel3.git -b master
+
+	if [ $COMPILER == "clang" ]; then
+		# Clone Google clang
+		git clone --depth=1 https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 linux-x86
+		# Set environment for clang
+		TC_DIR=$KERNEL_DIR/linux-x86/clang-r498229b
+		# Clone GCC ARM64 and ARM32
+		git clone https://github.com/arter97/arm64-gcc.git --depth=1 gcc64
+		git clone https://github.com/arter97/arm32-gcc.git --depth=1 gcc32
+		# Set environment for GCC ARM64 and ARM32
+		GCC64_DIR=$KERNEL_DIR/gcc64
+		GCC32_DIR=$KERNEL_DIR/gcc32
+        PATH=$TC_DIR/bin/:$PATH
+	fi
+
+	export PATH
+}
+
+# Set function for naming zip file
+set_naming() {
+	if [ -d "$KERNEL_DIR"/KernelSU ]; then
+		KERNEL_NAME="RyzenKernel-AOSP-Ginkgo-KSU-$ZIP_DATE"
+		export ZIP_NAME="$KERNEL_NAME.zip"
+	else
+		KERNEL_NAME="RyzenKernel-AOSP-Ginkgo-$ZIP_DATE"
+		export ZIP_NAME="$KERNEL_NAME.zip"
+	fi
+}
+
+# Set function for override kernel name
+override_name() {
+	if [ -d "$KERNEL_DIR"/KernelSU ]; then
+		LOCALVERSION="-RyzenKernel-KSU"
+	else
+		LOCALVERSION="-RyzenKernel"
+	fi
+
+	export LOCALVERSION
+}
+
+# Set function for send messages to Telegram
+send_tg_msg() {
+	tg_post_msg "<b>Docker OS: </b><code>$DISTRO</code>" \
+	            "<b>Kernel Version : </b><code>$KERVER</code>" \
+	            "<b>Date : </b><code>$DATE</code>" \
+	            "<b>Device : </b><code>Redmi Note 8 (ginkgo)</code>" \
+	            "<b>Pipeline Host : </b><code>$KBUILD_BUILD_HOST</code>" \
+	            "<b>Host CPU Name : </b><code>$CPU_NAME</code>" \
+	            "<b>Host Core Count : </b><code>$PROCS core(s)</code>" \
+	            "<b>Host RAM Count : </b><code>$TOTAL_RAM_GB GB</code>" \
+	            "<b>Compiler Used : </b><code>$KBUILD_BUILD_HOST</code>" \
+	            "<b>Branch : </b><code>$BRANCH</code>" \
+	            "<b>Last Commit : </b><code>$COMMIT_HEAD</code>"
+}
+
+# Set function for starting compile
+compile() {
+	echo -e "Kernel compilation starting"
+	make O=out "$DEFCONFIG"
+	BUILD_START=$(date +"%s")
+	if [ $COMPILER == "clang" ]; then
+			make -j"$PROCS" O=out \
+					CLANG_TRIPLE=aarch64-linux-gnu- \
+					CROSS_COMPILE=aarch64-linux-android- \
+					CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+					CC=clang \
+					AR=llvm-ar \
+					NM=llvm-nm \
+					LD=ld.lld \
+                    AS=llvm-as \
+					OBJDUMP=llvm-objdump \
+                    OBJCOPY=llvm-objcopy \
+					STRIP=llvm-strip
+	fi
+	BUILD_END=$(date +"%s")
+	DIFF=$((BUILD_END - BUILD_START))
+	if [ -f "$IMG_DIR"/Image.gz-dtb ]; then
+		echo -e "Kernel successfully compiled"
+		if [ $LOCALBUILD == "1" ]; then
+			git restore arch/arm64/configs/vendor/ginkgo-perf_defconfig
+			if [ -d "$KERNEL_DIR"/KernelSU ]; then
+				git restore drivers/ fs/
+			fi
+		fi
+	elif ! [ -f "$IMG_DIR"/Image.gz-dtb ]; then
+		echo -e "Kernel compilation failed"
+		if [ $LOCALBUILD == "0" ]; then
+			tg_post_msg "<b>Build failed to compile after $((DIFF / 60)) minute(s) and $((DIFF % 60)) seconds</b>"
+		fi
+		if [ $LOCALBUILD == "1" ]; then
+			git restore arch/arm64/configs/vendor/ginkgo-perf_defconfig
+			if [ -d "$KERNEL_DIR"/KernelSU ]; then
+				git restore drivers/ fs/
+			fi
+		fi
+		exit 1
+	fi
+}
+
+# Set function for zipping into a flashable zip
+gen_zip() {
+	if [[ $LOCALBUILD == "1" || -d "$KERNEL_DIR"/KernelSU ]]; then
+		cd AnyKernel3 || exit
+		rm -rf dtb.img dtbo.img Image.gz-dtb *.zip
+		cd ..
+	fi
+
+	# Move kernel image to AnyKernel3
+	mv "$IMG_DIR"/dtb.img AnyKernel3/dtb.img
+	mv "$IMG_DIR"/dtbo.img AnyKernel3/dtbo.img
+	mv "$IMG_DIR"/Image AnyKernel3/Image.gz-dtb
+	cd AnyKernel3 || exit
+
+	# Archive to flashable zip
+	zip -r9 "$ZIP_NAME" * -x .git README.md *.zip
+
+	# Prepare a final zip variable
+	ZIP_FINAL="$ZIP_NAME"
+
+	if [ $LOCALBUILD == "0" ]; then
+		tg_post_build "$ZIP_FINAL" "<b>Build took : $((DIFF / 60)) minute(s) and $((DIFF % 60)) second(s)</b>"
+	fi
+
+	if ! [[ -d "/home/ryuzenn" || -d "/root/project" ]]; then
+		curl -i -T *.zip https://oshi.at
+		curl bashupload.com -T *.zip
+	fi
+	cd ..
+}
+
+clone
+compiler_opt
+if [ $LOCALBUILD == "0" ]; then
+	send_tg_msg
 fi
-cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3
-cp out/arch/arm64/boot/dtbo.img AnyKernel3
-rm -f *zip
-cd AnyKernel3
-git checkout master &> /dev/null
-if [[ $1 = "-k" || $1 = "--ksu" ]]; then
-zip -r9 "../$ZIPNAME_KSU" * -x '*.git*' README.md *placeholder
-else
-zip -r9 "../$ZIPNAME" * -x '*.git*' README.md *placeholder
-fi
-cd ..
-rm -rf AnyKernel3
-rm -rf out/arch/arm64/boot
-echo -e "\nCompleted in $((SECONDS / 60)) minute(s) and $((SECONDS % 60)) second(s) !"
-if [[ $1 = "-k" || $1 = "--ksu" ]]; then
-echo "Zip: $ZIPNAME_KSU"
-else
-echo "Zip: $ZIPNAME"
-fi
-else
-echo -e "\nCompilation failed!"
-exit 1
-fi
+override_name
+compile
+set_naming
+gen_zip
+setup_ksu
+override_name
+compile
+set_naming
+gen_zip

@@ -50,13 +50,10 @@ exit 1
 fi
 fi
 
-if [[ $1 = "-c" || $1 = "--clean" ]]; then
-rm -rf out
-fi
-
-if [[ $1 = "-k" || $1 = "--ksu" ]]; then
-	echo -e "\nCleanup KernelSU first on local build\n"
-	rm -rf KernelSU drivers/kernelsu
+# Setup and apply patch KernelSU in root dir
+if ! [ -d "$KERNEL_DIR"/KernelSU ]; then
+	curl -LSs "https://raw.githubusercontent.com/kutemeikito/KernelSU/main/kernel/setup.sh" | bash -s main
+	git apply KernelSU-hook.patch
 else
 	echo -e "\nSet No KernelSU Install, just skip\n"
 fi

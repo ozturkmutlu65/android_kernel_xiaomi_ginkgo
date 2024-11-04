@@ -62,7 +62,7 @@ fi
 # Set function for override kernel name and variants
 if [[ $1 = "-k" || $1 = "--ksu" ]]; then
 echo -e "\nKSU Support, let's Make it On\n"
-curl -kLSs "https://raw.githubusercontent.com/kutemeikito/KernelSU/main/kernel/setup.sh" | bash -s main
+curl -kLSs "https://raw.githubusercontent.com/kutemeikito/KernelSU/main/kernel/setup.sh" | bash -s non-gki
 git apply KernelSU-hook.patch
 sed -i 's/CONFIG_KSU=n/CONFIG_KSU=y/g' arch/arm64/configs/vendor/ginkgo-perf_defconfig
 sed -i 's/CONFIG_LOCALVERSION="-RyzenKernel"/CONFIG_LOCALVERSION="-RyzenKernel-KSU"/g' arch/arm64/configs/vendor/ginkgo-perf_defconfig

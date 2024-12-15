@@ -257,7 +257,7 @@ union bpf_attr {
 		__u32	numa_node;	/* numa node (effective only if
 					 * BPF_F_NUMA_NODE is set).
 					 */
-		__u8	map_name[BPF_OBJ_NAME_LEN];
+		char	map_name[BPF_OBJ_NAME_LEN];
 	};
 
 	struct { /* anonymous struct used by BPF_MAP_*_ELEM commands */
@@ -280,7 +280,7 @@ union bpf_attr {
 		__aligned_u64	log_buf;	/* user supplied buffer */
 		__u32		kern_version;	/* checked when prog_type=kprobe */
 		__u32		prog_flags;
-		__u8		prog_name[BPF_OBJ_NAME_LEN];
+		char		prog_name[BPF_OBJ_NAME_LEN];
 		__u32		prog_ifindex;	/* ifindex of netdev to prep for */
 		/* For some prog types expected attach type must be known at
 		 * load time to verify attach type specific parts of prog
@@ -1028,7 +1028,7 @@ struct bpf_map_info {
 	__u32 value_size;
 	__u32 max_entries;
 	__u32 map_flags;
-	__u8  name[BPF_OBJ_NAME_LEN];
+	char  name[BPF_OBJ_NAME_LEN];
 } __attribute__((aligned(8)));
 
 /* User bpf_sock_addr struct to access socket fields and sockaddr struct passed

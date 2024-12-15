@@ -377,6 +377,9 @@ static int bpf_obj_name_cpy(char *dst, const char *src)
 	if (src == end)
 		return -EINVAL;
 
+       	/* '\0' terminates dst */
+	        *dst = 0;
+
 	return 0;
 }
 
@@ -1256,7 +1259,7 @@ static int bpf_prog_attach_check_attach_type(const struct bpf_prog *prog,
 }
 
 /* last field in 'union bpf_attr' used by this command */
-#define	BPF_PROG_LOAD_LAST_FIELD expected_attach_type
+#define	BPF_PROG_LOAD_LAST_FIELD prog_name
 
 static int bpf_prog_load(union bpf_attr *attr)
 {
@@ -1347,7 +1350,7 @@ retry_find_prog_type:
 #endif
 	/* find program type: socket_filter vs tracing_filter */
 	err = find_prog_type(type, prog);
-	if (err < 0) {
+			if (err < 0) {
 #ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
 		if (err == -EINVAL && type != BPF_PROG_TYPE_DUMMY) {
 			pr_err("Overriding type = %d to BPF_PROG_TYPE_DUMMY", type);
@@ -1826,7 +1829,7 @@ static int bpf_prog_get_info_by_fd(struct bpf_prog *prog,
 	info.nr_map_ids = prog->aux->used_map_cnt;
 	ulen = min_t(u32, info.nr_map_ids, ulen);
 	if (ulen) {
-		u32 __user *user_map_ids = u64_to_user_ptr(info.map_ids);
+		u32 *user_map_ids = (u32 *)info.map_ids;
 		u32 i;
 
 		for (i = 0; i < ulen; i++)

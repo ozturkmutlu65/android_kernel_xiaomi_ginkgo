@@ -11,7 +11,6 @@
  */
 #include <linux/bpf.h>
 #include <linux/bpf_trace.h>
-#include <linux/btf.h>
 #include <linux/syscalls.h>
 #include <linux/slab.h>
 #include <linux/sched/signal.h>
@@ -388,9 +387,6 @@ static int map_create(union bpf_attr *attr)
 	struct bpf_map *map;
 	int f_flags;
 	int err;
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-	int map_type = attr->map_type;
-#endif
 
 	err = CHECK_ATTR(BPF_MAP_CREATE);
 	if (err)
@@ -405,34 +401,10 @@ static int map_create(union bpf_attr *attr)
 	     !node_online(numa_node)))
 		return -EINVAL;
 
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-retry_find_and_alloc_map:
-#endif
 	/* find map type and init map: hashtable vs rbtree vs bloom vs ... */
 	map = find_and_alloc_map(attr);
-	if (IS_ERR(map)) {
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-		if (PTR_ERR(map) == -EINVAL && attr->map_type != BPF_MAP_TYPE_DUMMY) {
-			pr_err("Overriding map_type = %d to BPF_MAP_TYPE_DUMMY", attr->map_type);
-
-			attr->map_type = BPF_MAP_TYPE_DUMMY;
-			goto retry_find_and_alloc_map;
-		}
-#endif
+	if (IS_ERR(map))
 		return PTR_ERR(map);
-	}
-
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-	/* Restore real map type for dummy map */
-	if (map && map->map_type == BPF_MAP_TYPE_DUMMY) {
-		attr->map_type = map_type;
-		map->map_type = map_type;
-	}
-#endif
-
-	err = bpf_obj_name_cpy(map->name, attr->map_name);
-	if (err)
-		goto free_map_nouncharge;
 
 	err = bpf_obj_name_cpy(map->name, attr->map_name);
 	if (err)
@@ -921,10 +893,7 @@ static int find_prog_type(enum bpf_prog_type type, struct bpf_prog *prog)
 	if (type >= ARRAY_SIZE(bpf_prog_types) || !bpf_prog_types[type])
 		return -EINVAL;
 
-	if (!bpf_prog_is_dev_bound(prog->aux))
-		prog->aux->ops = bpf_prog_types[type];
-	else
-		prog->aux->ops = &bpf_offload_prog_ops;
+	prog->aux->ops = bpf_prog_types[type];
 	prog->type = type;
 	return 0;
 }
@@ -1154,7 +1123,7 @@ struct bpf_prog *bpf_prog_inc_not_zero(struct bpf_prog *prog)
 }
 EXPORT_SYMBOL_GPL(bpf_prog_inc_not_zero);
 
-static struct bpf_prog *__bpf_prog_get(u32 ufd, enum bpf_prog_type *attach_type)
+static struct bpf_prog *__bpf_prog_get(u32 ufd, enum bpf_prog_type *type)
 {
 	struct fd f = fdget(ufd);
 	struct bpf_prog *prog;
@@ -1162,7 +1131,7 @@ static struct bpf_prog *__bpf_prog_get(u32 ufd, enum bpf_prog_type *attach_type)
 	prog = ____bpf_prog_get(f);
 	if (IS_ERR(prog))
 		return prog;
-	if (attach_type && (prog->type != *attach_type || prog->aux->offload)) {
+	if (type && prog->type != *type) {
 		prog = ERR_PTR(-EINVAL);
 		goto out;
 	}
@@ -1189,8 +1158,7 @@ struct bpf_prog *bpf_prog_get_type(u32 ufd, enum bpf_prog_type type)
 EXPORT_SYMBOL_GPL(bpf_prog_get_type);
 
 /* last field in 'union bpf_attr' used by this command */
-
-#define	BPF_PROG_LOAD_LAST_FIELD prog_target_ifindex
+#define	BPF_PROG_LOAD_LAST_FIELD prog_name
 
 static int bpf_prog_load(union bpf_attr *attr)
 {
@@ -1199,7 +1167,6 @@ static int bpf_prog_load(union bpf_attr *attr)
 	int err;
 	char license[128];
 	bool is_gpl;
-	bool disabled = false;
 
 	if (CHECK_ATTR(BPF_PROG_LOAD))
 		return -EINVAL;
@@ -1228,15 +1195,10 @@ static int bpf_prog_load(union bpf_attr *attr)
 	    !capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-
 	/* plain bpf_prog allocation */
 	prog = bpf_prog_alloc(bpf_prog_size(attr->insn_cnt), GFP_USER);
 	if (!prog)
 		return -ENOMEM;
-
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-	prog->disabled = disabled;
-#endif
 
 	err = security_bpf_prog_alloc(prog->aux);
 	if (err)
@@ -1259,28 +1221,10 @@ static int bpf_prog_load(union bpf_attr *attr)
 	atomic_set(&prog->aux->refcnt, 1);
 	prog->gpl_compatible = is_gpl ? 1 : 0;
 
-	if (attr->prog_target_ifindex) {
-		err = bpf_prog_offload_init(prog, attr);
-		if (err)
-			goto free_prog;
-	}
-
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-retry_find_prog_type:
-#endif
 	/* find program type: socket_filter vs tracing_filter */
 	err = find_prog_type(type, prog);
-			if (err < 0) {
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-		if (err == -EINVAL && type != BPF_PROG_TYPE_DUMMY) {
-			pr_err("Overriding type = %d to BPF_PROG_TYPE_DUMMY", type);
-
-			type = BPF_PROG_TYPE_DUMMY;
-			goto retry_find_prog_type;
-		}
-#endif
+	if (err < 0)
 		goto free_prog;
-	}
 
 	prog->aux->load_time = ktime_get_boot_ns();
 	err = bpf_obj_name_cpy(prog->aux->name, attr->prog_name);
@@ -1289,25 +1233,14 @@ retry_find_prog_type:
 
 	/* run eBPF verifier */
 	err = bpf_check(&prog, attr);
-	if (err < 0) {
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-		if (err == -EINVAL) {
-			pr_err("eBPF verifier checks failed, keeping prog in disabled state");
-			prog->disabled = true;
-			goto skip_jit;
-		}
-#endif
+	if (err < 0)
 		goto free_used_maps;
-	}
 
 	/* eBPF program is ready to be JITed */
 	prog = bpf_prog_select_runtime(prog, &err);
 	if (err < 0)
 		goto free_used_maps;
 
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-skip_jit:
-#endif
 	err = bpf_prog_alloc_id(prog);
 	if (err)
 		goto free_used_maps;
@@ -1437,30 +1370,13 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 	case BPF_SK_SKB_STREAM_VERDICT:
 		return sockmap_get_from_fd(attr, true);
 	default:
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-		return 0;
-#else
 		return -EINVAL;
-#endif
 	}
 
 	prog = bpf_prog_get_type(attr->attach_bpf_fd, ptype);
 	if (IS_ERR(prog))
 		return PTR_ERR(prog);
 
-<<<<<<< HEAD
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-	if (prog->disabled)
-		return 0;
-#endif
-
-	if (bpf_prog_attach_check_attach_type(prog, attr->attach_type)) {
-		bpf_prog_put(prog);
-		return -EINVAL;
-	}
-
-=======
->>>>>>> 97020be29b50 (Revert "BACKPORT: bpf: Check attach type at prog load time")
 	cgrp = cgroup_get_from_fd(attr->target_fd);
 	if (IS_ERR(cgrp)) {
 		bpf_prog_put(prog);
@@ -1506,11 +1422,7 @@ static int bpf_prog_detach(const union bpf_attr *attr)
 	case BPF_SK_SKB_STREAM_VERDICT:
 		return sockmap_get_from_fd(attr, false);
 	default:
-#ifdef CONFIG_ANDROID_SPOOF_KERNEL_VERSION_FOR_BPF
-		return 0;
-#else
 		return -EINVAL;
-#endif
 	}
 
 	cgrp = cgroup_get_from_fd(attr->target_fd);
@@ -1641,7 +1553,7 @@ static int bpf_map_get_fd_by_id(const union bpf_attr *attr)
 	spin_unlock_bh(&map_idr_lock);
 
 	if (IS_ERR(map))
-		return 	PTR_ERR(map);
+		return PTR_ERR(map);
 
 	fd = bpf_map_new_fd(map, f_flags);
 	if (fd < 0)
@@ -1776,26 +1688,11 @@ static int bpf_obj_get_info_by_fd(const union bpf_attr *attr,
 	else if (f.file->f_op == &bpf_map_fops)
 		err = bpf_map_get_info_by_fd(f.file->private_data, attr,
 					     uattr);
-	else if (f.file->f_op == &btf_fops)
-		err = btf_get_info_by_fd(f.file->private_data, attr, uattr);
 	else
 		err = -EINVAL;
 
 	fdput(f);
 	return err;
-}
-
-#define BPF_BTF_LOAD_LAST_FIELD btf_log_level
-
-static int bpf_btf_load(const union bpf_attr *attr)
-{
-	if (CHECK_ATTR(BPF_BTF_LOAD))
-		return -EINVAL;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return btf_new_fd(attr);
 }
 
 SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, size)
@@ -1872,9 +1769,6 @@ SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, siz
 		break;
 	case BPF_OBJ_GET_INFO_BY_FD:
 		err = bpf_obj_get_info_by_fd(&attr, uattr);
-		break;
-	case BPF_BTF_LOAD:
-		err = bpf_btf_load(&attr);
 		break;
 	default:
 		err = -EINVAL;
